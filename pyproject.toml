@@ -16,6 +16,13 @@ dependencies = [
     "mcp",
 ]
 
+[tool.uv]
+dev-dependencies = [
+  "build",
+  "twine",
+  "wheel",
+]
+
 [project.scripts]
 mcp-server-metatool = "mcp_server_metatool:main"
 
