@@ -1,4 +1,4 @@
-# My Package
+# MCP Server MetaTool
 
 ## Overview
 Metatool MCP Server

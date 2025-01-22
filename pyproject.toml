@@ -9,6 +9,9 @@ description = "Metatool MCP Server"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {file = "LICENSE"}
+authors = [
+    {name = "James Zhang", email = "james@jczstudio.com"},
+]
 classifiers = [
     "Programming Language :: Python :: 3.10",
 ]
