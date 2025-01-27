@@ -7,13 +7,21 @@ from mcp import types
 from mcp.server import Server, NotificationOptions
 import httpx
 import os
+import re
+
+
+def sanitize_name(name: str) -> str:
+    """Sanitize the name to only contain allowed characters."""
+    return re.sub(r"[^a-zA-Z0-9_-]", "", name)
 
 
 # Create and run the proxy server with the list of sessions
 server = Server("mcp-server-metatool")
 
 
-METATOOL_API_BASE_URL = os.environ.get("METATOOL_API_BASE_URL", "http://localhost:12005")
+METATOOL_API_BASE_URL = os.environ.get(
+    "METATOOL_API_BASE_URL", "http://localhost:12005"
+)
 
 
 async def get_mcp_servers() -> list[StdioServerParameters]:
@@ -64,7 +72,9 @@ async def handle_list_tools() -> list[types.Tool]:
                     response = await session_data["session"].list_tools()
                     for tool in response.tools:
                         tool_copy = tool.copy()
-                        tool_copy.name = f"{session_data['name']}0{tool.name}"
+                        tool_copy.name = (
+                            f"{sanitize_name(session_data['name'])}__{tool.name}"
+                        )
                         all_tools.append(tool_copy)
 
     return all_tools
@@ -77,10 +87,10 @@ async def handle_call_tool(
     try:
         # Split the prefixed name into server name and tool name
         try:
-            server_name, tool_name = name.split("0", 1)
+            server_name, tool_name = name.split("__", 1)
         except ValueError:
             raise ValueError(
-                f"Invalid tool name format: {name}. Expected format: server_name0tool_name"
+                f"Invalid tool name format: {name}. Expected format: server_name__tool_name"
             )
 
         # Get all server parameters
@@ -91,7 +101,7 @@ async def handle_call_tool(
             async with stdio_client(params) as (read, write):
                 async with ClientSession(read, write) as session:
                     session_data = await initialize_session(session)
-                    if session_data["name"] == server_name:
+                    if sanitize_name(session_data["name"]) == server_name:
                         result = await session.call_tool(
                             tool_name,
                             (arguments or {}),
