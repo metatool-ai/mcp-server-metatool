@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="mcp-server-metatool",
-    version="0.0.2",
+    version="0.0.3",
     author="James Zhang",
     author_email="james@jczstudio.com",
     description="Metatool MCP Server",
