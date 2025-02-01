@@ -8,6 +8,7 @@ from mcp.server import Server, NotificationOptions
 import httpx
 import os
 import re
+import tempfile
 
 
 def sanitize_name(name: str) -> str:
@@ -25,23 +26,62 @@ METATOOL_API_BASE_URL = os.environ.get(
 
 
 async def get_mcp_servers() -> list[StdioServerParameters]:
-    async with httpx.AsyncClient() as client:
-        """Get MCP servers from the API."""
-        headers = {"Authorization": f"Bearer {os.environ['METATOOL_API_KEY']}"}
-        response = await client.get(
-            f"{METATOOL_API_BASE_URL}/api/mcp-servers", headers=headers
-        )
-        response.raise_for_status()
-        data = response.json()
-        server_params = []
-        for params in data:
-            # Convert empty lists and dicts to None
-            if "args" in params and not params["args"]:
-                params["args"] = None
-            if "env" in params and not params["env"]:
-                params["env"] = None
-            server_params.append(StdioServerParameters(**params))
-        return server_params
+    try:
+        async with httpx.AsyncClient() as client:
+            """Get MCP servers from the API."""
+            headers = {"Authorization": f"Bearer {os.environ['METATOOL_API_KEY']}"}
+            response = await client.get(
+                f"{METATOOL_API_BASE_URL}/api/mcp-servers", headers=headers
+            )
+            response.raise_for_status()
+            data = response.json()
+            server_params = []
+            for params in data:
+                # Convert empty lists and dicts to None
+                if "args" in params and not params["args"]:
+                    params["args"] = None
+                if "env" in params and not params["env"]:
+                    params["env"] = None
+                server_params.append(StdioServerParameters(**params))
+            return server_params
+    except Exception:
+        return []
+
+
+async def get_custom_mcp_servers() -> list[StdioServerParameters]:
+    try:
+        async with httpx.AsyncClient() as client:
+            headers = {"Authorization": f"Bearer {os.environ['METATOOL_API_KEY']}"}
+            response = await client.get(
+                f"{METATOOL_API_BASE_URL}/api/custom-mcp-servers", headers=headers
+            )
+            response.raise_for_status()
+            data = response.json()
+            server_params = []
+            for params in data:
+                if "code" not in params or "code_uuid" not in params:
+                    continue
+                code_uuid = params["code_uuid"]
+                with tempfile.NamedTemporaryFile(
+                    mode="w", suffix=f"_{code_uuid}.py", delete=False
+                ) as temp_file:
+                    temp_file.write(params["code"])
+                params["command"] = "uv"
+                params["args"] = ["run", temp_file.name] + params.get(
+                    "additionalArgs", []
+                )
+                if "env" in params and not params["env"]:
+                    params["env"] = None
+                server_params.append(StdioServerParameters(**params))
+            return server_params
+    except Exception:
+        return []
+
+
+async def get_all_mcp_servers() -> list[StdioServerParameters]:
+    server_params = await get_mcp_servers()
+    custom_server_params = await get_custom_mcp_servers()
+    return server_params + custom_server_params
 
 
 async def initialize_session(session: ClientSession) -> dict:
@@ -57,7 +97,7 @@ async def initialize_session(session: ClientSession) -> dict:
 @server.list_tools()
 async def handle_list_tools() -> list[types.Tool]:
     # Reload MCP servers
-    remote_server_params = await get_mcp_servers()
+    remote_server_params = await get_all_mcp_servers()
 
     # Combine with default servers
     all_server_params = remote_server_params
@@ -94,7 +134,7 @@ async def handle_call_tool(
             )
 
         # Get all server parameters
-        remote_server_params = await get_mcp_servers()
+        remote_server_params = await get_all_mcp_servers()
 
         # Find the matching server parameters
         for params in remote_server_params:
