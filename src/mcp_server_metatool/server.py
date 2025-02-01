@@ -65,17 +65,15 @@ def extract_imports(code: str) -> list[str]:
 
         return list(imports)
     except Exception as e:
-        print(f"Error parsing imports: {e}")
-        return []
+        raise RuntimeError(f"Error parsing imports: {e}") from e
 
 
 def install_dependencies(dependencies: list[str]):
     """Install required dependencies using uv pip."""
     try:
-        print(f"Checking dependencies: {dependencies}")
         subprocess.run(["uv", "pip", "install"] + dependencies, check=True)
     except subprocess.CalledProcessError as e:
-        print(f"Failed to install dependencies: {e}")
+        raise RuntimeError(f"Failed to install dependencies: {e}") from e
 
 
 async def get_custom_mcp_servers() -> list[StdioServerParameters]:
@@ -103,9 +101,19 @@ async def get_custom_mcp_servers() -> list[StdioServerParameters]:
                     script_path = temp_file.name
 
                 # Extract dependencies from the code
-                dependencies = extract_imports(params["code"])
-                if dependencies:
-                    install_dependencies(dependencies)
+                try:
+                    dependencies = extract_imports(params["code"])
+                    if dependencies:
+                        try:
+                            install_dependencies(dependencies)
+                        except Exception as e:
+                            print(
+                                f"Failed to install dependencies for server {code_uuid}: {e}"
+                            )
+                            continue
+                except Exception as e:
+                    print(f"Failed to extract imports for server {code_uuid}: {e}")
+                    continue
 
                 params["command"] = "uv"
                 params["args"] = ["run", script_path] + params.get("additionalArgs", [])
