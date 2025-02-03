@@ -5,6 +5,31 @@
 Metatool MCP Server is a proxy server that joins multiple MCP servers and forward tool calls to the appropriate server.
 It should be used with [metatool-app](https://github.com/metatool-ai/metatool-app), the GUI tool manager for MCP which is also open source, together.
 
+```mermaid
+sequenceDiagram
+    participant MCPClient as MCP Client (e.g. Claude Desktop)
+    participant MetaToolMCP as MetaTool MCP Server
+    participant MetaToolApp as MetaTool App
+    participant MCPServers as Installed MCP Servers in Metatool App
+
+    MCPClient ->> MetaToolMCP: Request list tools
+    MetaToolMCP ->> MetaToolApp: Get tools configuration & status
+    MetaToolApp ->> MetaToolMCP: Return tools configuration & status
+
+    loop For each listed MCP Server
+        MetaToolMCP ->> MCPServers: Request list_tools
+        MCPServers ->> MetaToolMCP: Return list of tools
+    end
+
+    MetaToolMCP ->> MetaToolMCP: Aggregate tool lists
+    MetaToolMCP ->> MCPClient: Return aggregated list of tools
+
+    MCPClient ->> MetaToolMCP: Call tool
+    MetaToolMCP ->> MCPServers: call_tool to target MCP Server
+    MCPServers ->> MetaToolMCP: Return tool response
+    MetaToolMCP ->> MCPClient: Return tool response
+```
+
 ## How it works
 - mcp-server-metatool itself is both a MCP client and a MCP server
 - On startup, it connects to the metatool-app API to get a list of MCP servers to connect to
