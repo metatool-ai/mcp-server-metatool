@@ -261,7 +261,7 @@ async def serve():
             write_stream,
             InitializationOptions(
                 server_name="metatool",
-                server_version="0.0.1",
+                server_version="0.0.4",
                 capabilities=server.get_capabilities(
                     notification_options=NotificationOptions(),
                     experimental_capabilities={},
