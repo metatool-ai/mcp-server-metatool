@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mcp-server-metatool"
-version = "0.0.3"
+version = "0.0.4"
 description = "Metatool MCP Server"
 readme = "README.md"
 requires-python = ">=3.10"

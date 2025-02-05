@@ -11,6 +11,47 @@ import re
 import tempfile
 import subprocess
 import ast
+import sys
+
+# Environment variables to inherit by default
+DEFAULT_INHERITED_ENV_VARS = (
+    [
+        "APPDATA",
+        "HOMEDRIVE",
+        "HOMEPATH",
+        "LOCALAPPDATA",
+        "PATH",
+        "PROCESSOR_ARCHITECTURE",
+        "SYSTEMDRIVE",
+        "SYSTEMROOT",
+        "TEMP",
+        "USERNAME",
+        "USERPROFILE",
+    ]
+    if sys.platform == "win32"
+    else ["HOME", "LOGNAME", "PATH", "SHELL", "TERM", "USER"]
+)
+
+
+def get_default_environment() -> dict[str, str]:
+    """
+    Returns a default environment object including only environment variables deemed
+    safe to inherit.
+    """
+    env: dict[str, str] = {}
+
+    for key in DEFAULT_INHERITED_ENV_VARS:
+        value = os.environ.get(key)
+        if value is None:
+            continue
+
+        if value.startswith("()"):
+            # Skip functions, which are a security risk
+            continue
+
+        env[key] = value
+
+    return env
 
 
 def sanitize_name(name: str) -> str:
@@ -42,8 +83,13 @@ async def get_mcp_servers() -> list[StdioServerParameters]:
                 # Convert empty lists and dicts to None
                 if "args" in params and not params["args"]:
                     params["args"] = None
-                if "env" in params and not params["env"]:
-                    params["env"] = None
+
+                # Merge environment variables
+                params["env"] = {
+                    **get_default_environment(),
+                    **(params.get("env") or {}),
+                }
+
                 server_params.append(StdioServerParameters(**params))
             return server_params
     except Exception:
@@ -118,8 +164,11 @@ async def get_custom_mcp_servers() -> list[StdioServerParameters]:
                 params["command"] = "uv"
                 params["args"] = ["run", script_path] + params.get("additionalArgs", [])
 
-                if "env" in params and not params["env"]:
-                    params["env"] = None
+                # Merge environment variables
+                params["env"] = {
+                    **get_default_environment(),
+                    **(params.get("env") or {}),
+                }
 
                 server_params.append(StdioServerParameters(**params))
             return server_params
@@ -212,7 +261,7 @@ async def serve():
             write_stream,
             InitializationOptions(
                 server_name="metatool",
-                server_version="0.0.1",
+                server_version="0.0.4",
                 capabilities=server.get_capabilities(
                     notification_options=NotificationOptions(),
                     experimental_capabilities={},
