@@ -9,6 +9,10 @@ import httpx
 import os
 import re
 import sys
+from contextlib import AsyncExitStack
+
+exit_stacks = {}
+sessions = {}
 
 # Environment variables to inherit by default
 DEFAULT_INHERITED_ENV_VARS = (
@@ -65,7 +69,7 @@ METATOOL_API_BASE_URL = os.environ.get(
 )
 
 
-async def get_mcp_servers() -> list[StdioServerParameters]:
+async def get_mcp_servers() -> dict[str, StdioServerParameters]:
     try:
         async with httpx.AsyncClient() as client:
             """Get MCP servers from the API."""
@@ -75,7 +79,7 @@ async def get_mcp_servers() -> list[StdioServerParameters]:
             )
             response.raise_for_status()
             data = response.json()
-            server_params = []
+            server_dict = {}
             for params in data:
                 # Convert empty lists and dicts to None
                 if "args" in params and not params["args"]:
@@ -87,15 +91,13 @@ async def get_mcp_servers() -> list[StdioServerParameters]:
                     **(params.get("env") or {}),
                 }
 
-                server_params.append(StdioServerParameters(**params))
-            return server_params
+                server_params = StdioServerParameters(**params)
+                uuid = params.get("uuid")
+                if uuid:
+                    server_dict[uuid] = server_params
+            return server_dict
     except Exception:
-        return []
-
-
-async def get_all_mcp_servers() -> list[StdioServerParameters]:
-    server_params = await get_mcp_servers()
-    return server_params
+        return {}
 
 
 async def initialize_session(session: ClientSession) -> dict:
@@ -111,25 +113,42 @@ async def initialize_session(session: ClientSession) -> dict:
 @server.list_tools()
 async def handle_list_tools() -> list[types.Tool]:
     # Reload MCP servers
-    remote_server_params = await get_all_mcp_servers()
+    remote_server_params = await get_mcp_servers()
 
-    # Combine with default servers
-    all_server_params = remote_server_params
     all_tools = []
 
     # Process each server parameter
-    for params in all_server_params:
-        async with stdio_client(params) as (read, write):
-            async with ClientSession(read, write) as session:
-                session_data = await initialize_session(session)
-                if session_data["capabilities"].tools:
-                    response = await session_data["session"].list_tools()
-                    for tool in response.tools:
-                        tool_copy = tool.model_copy()
-                        tool_copy.name = (
-                            f"{sanitize_name(session_data['name'])}__{tool.name}"
-                        )
-                        all_tools.append(tool_copy)
+    for uuid, params in remote_server_params.items():
+        if uuid not in exit_stacks:
+            exit_stacks[uuid] = AsyncExitStack()
+            stdio_transport = await exit_stacks[uuid].enter_async_context(
+                stdio_client(params)
+            )
+            stdio, write = stdio_transport
+            session = await exit_stacks[uuid].enter_async_context(
+                ClientSession(stdio, write)
+            )
+            session_data = await initialize_session(session)
+            sessions[uuid] = session_data
+            if session_data["capabilities"].tools:
+                response = await session_data["session"].list_tools()
+                for tool in response.tools:
+                    tool_copy = tool.model_copy()
+                    tool_copy.name = (
+                        f"{sanitize_name(session_data['name'])}__{tool.name}"
+                    )
+                    all_tools.append(tool_copy)
+        else:
+            session = sessions[uuid]["session"]
+            session_data = sessions[uuid]
+            if session_data["capabilities"].tools:
+                response = await session.list_tools()
+                for tool in response.tools:
+                    tool_copy = tool.model_copy()
+                    tool_copy.name = (
+                        f"{sanitize_name(session_data['name'])}__{tool.name}"
+                    )
+                    all_tools.append(tool_copy)
 
     return all_tools
 
@@ -148,10 +167,10 @@ async def handle_call_tool(
             )
 
         # Get all server parameters
-        remote_server_params = await get_all_mcp_servers()
+        remote_server_params = await get_mcp_servers()
 
         # Find the matching server parameters
-        for params in remote_server_params:
+        for uuid, params in remote_server_params.items():
             async with stdio_client(params) as (read, write):
                 async with ClientSession(read, write) as session:
                     session_data = await initialize_session(session)
