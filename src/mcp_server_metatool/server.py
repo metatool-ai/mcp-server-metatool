@@ -8,9 +8,6 @@ from mcp.server import Server, NotificationOptions
 import httpx
 import os
 import re
-import tempfile
-import subprocess
-import ast
 import sys
 
 # Environment variables to inherit by default
@@ -96,91 +93,9 @@ async def get_mcp_servers() -> list[StdioServerParameters]:
         return []
 
 
-def extract_imports(code: str) -> list[str]:
-    """Extract top-level import statements from the Python code."""
-    try:
-        tree = ast.parse(code)
-        imports = set()
-
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    imports.add(alias.name.split(".")[0])
-            elif isinstance(node, ast.ImportFrom) and node.module:
-                imports.add(node.module.split(".")[0])
-
-        return list(imports)
-    except Exception as e:
-        raise RuntimeError(f"Error parsing imports: {e}") from e
-
-
-def install_dependencies(dependencies: list[str]):
-    """Install required dependencies using uv pip."""
-    try:
-        subprocess.run(["uv", "pip", "install"] + dependencies, check=True)
-    except subprocess.CalledProcessError as e:
-        raise RuntimeError(f"Failed to install dependencies: {e}") from e
-
-
-async def get_custom_mcp_servers() -> list[StdioServerParameters]:
-    try:
-        async with httpx.AsyncClient() as client:
-            headers = {"Authorization": f"Bearer {os.environ['METATOOL_API_KEY']}"}
-            response = await client.get(
-                f"{METATOOL_API_BASE_URL}/api/custom-mcp-servers", headers=headers
-            )
-            response.raise_for_status()
-            data = response.json()
-            server_params = []
-
-            for params in data:
-                if "code" not in params or "code_uuid" not in params:
-                    continue
-
-                code_uuid = params["code_uuid"]
-
-                # Create temp file for the script
-                with tempfile.NamedTemporaryFile(
-                    mode="w", suffix=f"_{code_uuid}.py", delete=False
-                ) as temp_file:
-                    temp_file.write(params["code"])
-                    script_path = temp_file.name
-
-                # Extract dependencies from the code
-                try:
-                    dependencies = extract_imports(params["code"])
-                    if dependencies:
-                        try:
-                            install_dependencies(dependencies)
-                        except Exception as e:
-                            print(
-                                f"Failed to install dependencies for server {code_uuid}: {e}"
-                            )
-                            continue
-                except Exception as e:
-                    print(f"Failed to extract imports for server {code_uuid}: {e}")
-                    continue
-
-                params["command"] = "uv"
-                params["args"] = ["run", script_path] + params.get("additionalArgs", [])
-
-                # Merge environment variables
-                params["env"] = {
-                    **get_default_environment(),
-                    **(params.get("env") or {}),
-                }
-
-                server_params.append(StdioServerParameters(**params))
-            return server_params
-    except Exception as e:
-        print(f"Error fetching MCP servers: {e}")
-        return []
-
-
 async def get_all_mcp_servers() -> list[StdioServerParameters]:
     server_params = await get_mcp_servers()
-    custom_server_params = await get_custom_mcp_servers()
-    return server_params + custom_server_params
+    return server_params
 
 
 async def initialize_session(session: ClientSession) -> dict:
