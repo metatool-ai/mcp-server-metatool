@@ -125,7 +125,7 @@ async def handle_list_tools() -> list[types.Tool]:
                 if session_data["capabilities"].tools:
                     response = await session_data["session"].list_tools()
                     for tool in response.tools:
-                        tool_copy = tool.copy()
+                        tool_copy = tool.model_copy()
                         tool_copy.name = (
                             f"{sanitize_name(session_data['name'])}__{tool.name}"
                         )
