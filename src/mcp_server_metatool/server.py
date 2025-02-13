@@ -10,6 +10,8 @@ import os
 import re
 import sys
 from contextlib import AsyncExitStack
+import hashlib
+import json
 
 sessions = {}
 
@@ -57,6 +59,21 @@ def get_default_environment() -> dict[str, str]:
 def sanitize_name(name: str) -> str:
     """Sanitize the name to only contain allowed characters."""
     return re.sub(r"[^a-zA-Z0-9_-]", "", name)
+
+
+def compute_params_hash(params: StdioServerParameters, uuid: str) -> str:
+    """Compute a hash of StdioServerParameters and UUID to detect changes."""
+    # Convert params to a dictionary and sort keys for consistent hashing
+    params_dict = {
+        "uuid": uuid,
+        "command": params.command,
+        "args": params.args,
+        "env": dict(sorted(params.env.items())) if params.env else None,
+    }
+    # Convert to JSON string with sorted keys for consistent hashing
+    params_json = json.dumps(params_dict, sort_keys=True)
+    # Compute SHA-256 hash
+    return hashlib.sha256(params_json.encode()).hexdigest()
 
 
 # Create and run the proxy server with the list of sessions
@@ -118,17 +135,27 @@ async def handle_list_tools() -> list[types.Tool]:
 
     # Process each server parameter
     for uuid, params in remote_server_params.items():
-        if uuid not in sessions:
-            sessions[uuid] = {"exit_stack": AsyncExitStack()}
-            stdio_transport = await sessions[uuid]["exit_stack"].enter_async_context(
-                stdio_client(params)
-            )
+        # Compute hash of parameters
+        params_hash = compute_params_hash(params, uuid)
+        session_key = f"{uuid}_{params_hash}"
+
+        if session_key not in sessions:
+            # Close existing session for this UUID if it exists with a different hash
+            old_session_keys = [k for k in sessions.keys() if k.startswith(f"{uuid}_")]
+            for old_key in old_session_keys:
+                await sessions[old_key]["exit_stack"].aclose()
+                del sessions[old_key]
+
+            sessions[session_key] = {"exit_stack": AsyncExitStack()}
+            stdio_transport = await sessions[session_key][
+                "exit_stack"
+            ].enter_async_context(stdio_client(params))
             stdio, write = stdio_transport
-            session = await sessions[uuid]["exit_stack"].enter_async_context(
+            session = await sessions[session_key]["exit_stack"].enter_async_context(
                 ClientSession(stdio, write)
             )
             session_data = await initialize_session(session)
-            sessions[uuid].update(session_data)
+            sessions[session_key].update(session_data)
             if session_data["capabilities"].tools:
                 response = await session_data["session"].list_tools()
                 for tool in response.tools:
@@ -138,8 +165,8 @@ async def handle_list_tools() -> list[types.Tool]:
                     )
                     all_tools.append(tool_copy)
         else:
-            session = sessions[uuid]["session"]
-            session_data = sessions[uuid]
+            session = sessions[session_key]["session"]
+            session_data = sessions[session_key]
             if session_data["capabilities"].tools:
                 response = await session.list_tools()
                 for tool in response.tools:
@@ -170,11 +197,14 @@ async def handle_call_tool(
 
         # Find the matching server parameters
         for uuid, params in remote_server_params.items():
-            if uuid not in sessions:
+            params_hash = compute_params_hash(params, uuid)
+            session_key = f"{uuid}_{params_hash}"
+
+            if session_key not in sessions:
                 continue
 
-            session = sessions[uuid]["session"]
-            session_data = sessions[uuid]
+            session = sessions[session_key]["session"]
+            session_data = sessions[session_key]
 
             if sanitize_name(session_data["name"]) == server_name:
                 result = await session.call_tool(
