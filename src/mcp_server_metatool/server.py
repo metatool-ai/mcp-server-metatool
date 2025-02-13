@@ -11,7 +11,6 @@ import re
 import sys
 from contextlib import AsyncExitStack
 
-exit_stacks = {}
 sessions = {}
 
 # Environment variables to inherit by default
@@ -119,17 +118,17 @@ async def handle_list_tools() -> list[types.Tool]:
 
     # Process each server parameter
     for uuid, params in remote_server_params.items():
-        if uuid not in exit_stacks:
-            exit_stacks[uuid] = AsyncExitStack()
-            stdio_transport = await exit_stacks[uuid].enter_async_context(
+        if uuid not in sessions:
+            sessions[uuid] = {"exit_stack": AsyncExitStack()}
+            stdio_transport = await sessions[uuid]["exit_stack"].enter_async_context(
                 stdio_client(params)
             )
             stdio, write = stdio_transport
-            session = await exit_stacks[uuid].enter_async_context(
+            session = await sessions[uuid]["exit_stack"].enter_async_context(
                 ClientSession(stdio, write)
             )
             session_data = await initialize_session(session)
-            sessions[uuid] = session_data
+            sessions[uuid].update(session_data)
             if session_data["capabilities"].tools:
                 response = await session_data["session"].list_tools()
                 for tool in response.tools:
@@ -207,5 +206,7 @@ async def serve():
                 ),
             )
         finally:
-            for exit_stack in exit_stacks.values():
-                await exit_stack.aclose()
+            for session_info in sessions.values():
+                if "exit_stack" in session_info:
+                    await session_info["exit_stack"].aclose()
+            sessions.clear()
