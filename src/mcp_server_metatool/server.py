@@ -13,7 +13,7 @@ from contextlib import AsyncExitStack
 import hashlib
 import json
 
-sessions = {}
+_sessions = {}
 
 # Environment variables to inherit by default
 DEFAULT_INHERITED_ENV_VARS = (
@@ -85,10 +85,20 @@ METATOOL_API_BASE_URL = os.environ.get(
 )
 
 
-async def get_mcp_servers() -> dict[str, StdioServerParameters]:
+_mcp_servers_cache: dict[str, StdioServerParameters] | None = None
+
+
+async def get_mcp_servers(
+    force_refresh: bool = False,
+) -> dict[str, StdioServerParameters]:
+    """Get MCP servers from the API with caching support."""
+    global _mcp_servers_cache
+
+    if not force_refresh and _mcp_servers_cache is not None:
+        return _mcp_servers_cache
+
     try:
         async with httpx.AsyncClient() as client:
-            """Get MCP servers from the API."""
             headers = {"Authorization": f"Bearer {os.environ['METATOOL_API_KEY']}"}
             response = await client.get(
                 f"{METATOOL_API_BASE_URL}/api/mcp-servers", headers=headers
@@ -111,8 +121,12 @@ async def get_mcp_servers() -> dict[str, StdioServerParameters]:
                 uuid = params.get("uuid")
                 if uuid:
                     server_dict[uuid] = server_params
+
+            _mcp_servers_cache = server_dict
             return server_dict
     except Exception:
+        if _mcp_servers_cache is not None:
+            return _mcp_servers_cache
         return {}
 
 
@@ -128,8 +142,8 @@ async def initialize_session(session: ClientSession) -> dict:
 
 @server.list_tools()
 async def handle_list_tools() -> list[types.Tool]:
-    # Reload MCP servers
-    remote_server_params = await get_mcp_servers()
+    # Reload MCP servers with force refresh
+    remote_server_params = await get_mcp_servers(force_refresh=True)
 
     all_tools = []
 
@@ -139,23 +153,23 @@ async def handle_list_tools() -> list[types.Tool]:
         params_hash = compute_params_hash(params, uuid)
         session_key = f"{uuid}_{params_hash}"
 
-        if session_key not in sessions:
+        if session_key not in _sessions:
             # Close existing session for this UUID if it exists with a different hash
-            old_session_keys = [k for k in sessions.keys() if k.startswith(f"{uuid}_")]
+            old_session_keys = [k for k in _sessions.keys() if k.startswith(f"{uuid}_")]
             for old_key in old_session_keys:
-                await sessions[old_key]["exit_stack"].aclose()
-                del sessions[old_key]
+                await _sessions[old_key]["exit_stack"].aclose()
+                del _sessions[old_key]
 
-            sessions[session_key] = {"exit_stack": AsyncExitStack()}
-            stdio_transport = await sessions[session_key][
+            _sessions[session_key] = {"exit_stack": AsyncExitStack()}
+            stdio_transport = await _sessions[session_key][
                 "exit_stack"
             ].enter_async_context(stdio_client(params))
             stdio, write = stdio_transport
-            session = await sessions[session_key]["exit_stack"].enter_async_context(
+            session = await _sessions[session_key]["exit_stack"].enter_async_context(
                 ClientSession(stdio, write)
             )
             session_data = await initialize_session(session)
-            sessions[session_key].update(session_data)
+            _sessions[session_key].update(session_data)
             if session_data["capabilities"].tools:
                 response = await session_data["session"].list_tools()
                 for tool in response.tools:
@@ -165,8 +179,8 @@ async def handle_list_tools() -> list[types.Tool]:
                     )
                     all_tools.append(tool_copy)
         else:
-            session = sessions[session_key]["session"]
-            session_data = sessions[session_key]
+            session = _sessions[session_key]["session"]
+            session_data = _sessions[session_key]
             if session_data["capabilities"].tools:
                 response = await session.list_tools()
                 for tool in response.tools:
@@ -192,19 +206,19 @@ async def handle_call_tool(
                 f"Invalid tool name format: {name}. Expected format: server_name__tool_name"
             )
 
-        # Get all server parameters
-        remote_server_params = await get_mcp_servers()
+        # Get all server parameters from cache
+        remote_server_params = await get_mcp_servers(force_refresh=False)
 
         # Find the matching server parameters
         for uuid, params in remote_server_params.items():
             params_hash = compute_params_hash(params, uuid)
             session_key = f"{uuid}_{params_hash}"
 
-            if session_key not in sessions:
+            if session_key not in _sessions:
                 continue
 
-            session = sessions[session_key]["session"]
-            session_data = sessions[session_key]
+            session = _sessions[session_key]["session"]
+            session_data = _sessions[session_key]
 
             if sanitize_name(session_data["name"]) == server_name:
                 result = await session.call_tool(
@@ -236,7 +250,7 @@ async def serve():
                 ),
             )
         finally:
-            for session_info in sessions.values():
+            for session_info in _sessions.values():
                 if "exit_stack" in session_info:
                     await session_info["exit_stack"].aclose()
-            sessions.clear()
+            _sessions.clear()
