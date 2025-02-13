@@ -171,15 +171,18 @@ async def handle_call_tool(
 
         # Find the matching server parameters
         for uuid, params in remote_server_params.items():
-            async with stdio_client(params) as (read, write):
-                async with ClientSession(read, write) as session:
-                    session_data = await initialize_session(session)
-                    if sanitize_name(session_data["name"]) == server_name:
-                        result = await session.call_tool(
-                            tool_name,
-                            (arguments or {}),
-                        )
-                        return result.content
+            if uuid not in sessions:
+                continue
+
+            session = sessions[uuid]["session"]
+            session_data = sessions[uuid]
+
+            if sanitize_name(session_data["name"]) == server_name:
+                result = await session.call_tool(
+                    tool_name,
+                    (arguments or {}),
+                )
+                return result.content
 
         raise ValueError(f"Server '{server_name}' not found")
 
@@ -190,15 +193,19 @@ async def handle_call_tool(
 async def serve():
     # Run the server using stdin/stdout streams
     async with stdio_server() as (read_stream, write_stream):
-        await server.run(
-            read_stream,
-            write_stream,
-            InitializationOptions(
-                server_name="metatool",
-                server_version="0.0.4",
-                capabilities=server.get_capabilities(
-                    notification_options=NotificationOptions(),
-                    experimental_capabilities={},
+        try:
+            await server.run(
+                read_stream,
+                write_stream,
+                InitializationOptions(
+                    server_name="metatool",
+                    server_version="0.0.4",
+                    capabilities=server.get_capabilities(
+                        notification_options=NotificationOptions(),
+                        experimental_capabilities={},
+                    ),
                 ),
-            ),
-        )
+            )
+        finally:
+            for exit_stack in exit_stacks.values():
+                await exit_stack.aclose()
