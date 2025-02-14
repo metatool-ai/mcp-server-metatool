@@ -1,10 +1,9 @@
 from mcp import ClientSession, StdioServerParameters
 from mcp.server.stdio import stdio_server
 from mcp.client.stdio import stdio_client
-from mcp.server.models import InitializationOptions
 
 from mcp import types
-from mcp.server import Server, NotificationOptions
+from mcp.server import Server
 import httpx
 import os
 import re
@@ -236,19 +235,9 @@ async def handle_call_tool(
 async def serve():
     # Run the server using stdin/stdout streams
     async with stdio_server() as (read_stream, write_stream):
+        options = server.create_initialization_options()
         try:
-            await server.run(
-                read_stream,
-                write_stream,
-                InitializationOptions(
-                    server_name="metatool",
-                    server_version="0.0.4",
-                    capabilities=server.get_capabilities(
-                        notification_options=NotificationOptions(),
-                        experimental_capabilities={},
-                    ),
-                ),
-            )
+            await server.run(read_stream, write_stream, options, raise_exceptions=True)
         finally:
             for session_info in _sessions.values():
                 if "exit_stack" in session_info:
