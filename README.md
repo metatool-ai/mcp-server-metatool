@@ -1,5 +1,12 @@
 # MCP Server MetaTool
 
+![Warning](https://img.shields.io/badge/status-deprecated-red)  
+⚠️ **This repo is no longer maintained!**
+
+Check out this Node.js substitute: [metatool-ai/mcp-server-metamcp](https://github.com/metatool-ai/mcp-server-metamcp).  
+It has **way better performance** and **fewer bugs**.  
+_(I am the author there too.)_
+
 ## Overview
 
 Metatool MCP Server is a proxy server that joins multiple MCP servers and forward tool calls to the appropriate server.
@@ -31,11 +38,11 @@ sequenceDiagram
 ```
 
 ## How it works
+
 - mcp-server-metatool itself is both a MCP client and a MCP server
 - On startup, it connects to the metatool-app API to get a list of MCP servers to connect to
 - On `list_tools` call of MCP, it joins all tools from all MCP servers with namespace isolation.
 - On `call_tool` call of MCP, it forwards the call to the appropriate server.
-
 
 ## Installation
 
